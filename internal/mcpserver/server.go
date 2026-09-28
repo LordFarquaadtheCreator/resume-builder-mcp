@@ -28,16 +28,7 @@ type SetEmbeddingConfigInput struct {
 	Model   string `json:"model" jsonschema:"required,Embedding model name (e.g. text-embedding-embeddinggemma-300m-qat)"`
 }
 
-type InitResumeInput struct {
-	Data resume.ResumeData `json:"data" jsonschema:"required,Full structured resume data"`
-}
-
 type GetResumeInfoInput struct{}
-
-type SearchResumeInput struct {
-	Query string `json:"query" jsonschema:"required,Job description or query text to search against"`
-	TopK  int    `json:"topK,omitempty" jsonschema:"Max items per category. Defaults to 10."`
-}
 
 type GenerateResumeInput struct {
 	Mode      string             `json:"mode" jsonschema:"required,Generation mode: 'auto' (MCP selects content) or 'manual' (agent provides full data)"`
@@ -53,21 +44,12 @@ type SetEmbeddingConfigOutput struct {
 	Message string `json:"message"`
 }
 
-type InitResumeOutput struct {
-	Message string       `json:"message"`
-	Stats   resume.Stats `json:"stats"`
-}
-
 type GetResumeInfoOutput struct {
 	Resume        *resume.StoredResume `json:"resume"`
 	Stats         resume.Stats         `json:"stats"`
 	VectorChunks  int                  `json:"vectorChunks"`
 	HasEmbedding  bool                 `json:"hasEmbeddingConfig"`
 	InitializedAt string               `json:"initializedAt,omitempty"`
-}
-
-type SearchResumeOutput struct {
-	Result vectorstore.SearchResult `json:"result"`
 }
 
 type GenerateResumeOutput struct {
@@ -95,33 +77,33 @@ func Run(dataDir string) error {
 	// 1. set_embedding_config
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_embedding_config",
-		Description: "Set the embedding provider configuration. MUST be called before init_resume or search_resume. Stores an OpenAI-compatible embedding endpoint (base URL, API key, model name). Persists on disk across restarts.",
+		Description: "Set the embedding provider configuration. MUST be called before resume_items init/add/update (which embed new content) and resume_items search. Stores an OpenAI-compatible embedding endpoint (base URL, API key, model name). Persists on disk across restarts.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args SetEmbeddingConfigInput) (*mcp.CallToolResult, SetEmbeddingConfigOutput, error) {
 		return handleSetEmbeddingConfig(ctx, req, args, d)
 	})
 
-	// 2. init_resume
+	// 2. health
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "init_resume",
-		Description: "Initialize or re-initialize stored resume data. Accepts full structured resume (name, contact, education, skills, experiences, projects). Embeds every bullet point and skill category into a vector store for relevance-based search. Requires set_embedding_config to be called first. Re-init overwrites all existing data and rebuilds the vector store.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args InitResumeInput) (*mcp.CallToolResult, InitResumeOutput, error) {
-		return handleInitResume(ctx, req, args, d)
+		Name:        "health",
+		Description: "Check server state: whether resume data exists, whether embedding config is set, vector store chunk count, resume item stats, and when the resume was initialized. No config needed. Use this first to decide between resume_items operation 'init' (first-time setup) and incremental operations.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args HealthInput) (*mcp.CallToolResult, HealthOutput, error) {
+		return handleHealth(d)
 	})
 
 	// 3. get_resume_info
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_resume_info",
-		Description: "Get cached resume data and vector store stats. No embedding config needed. Returns the full stored resume, content counts, and whether embedding config is set.",
+		Description: "Get the full stored resume data and vector store stats. No embedding config needed. Use resume_items type='get' with filters to read single items instead of the full dump.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args GetResumeInfoInput) (*mcp.CallToolResult, GetResumeInfoOutput, error) {
 		return handleGetResumeInfo(ctx, req, d)
 	})
 
-	// 4. search_resume
+	// 4. resume_items
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search_resume",
-		Description: "Search resume vector store by job description. Returns most relevant items grouped by category: experiences (reverse chronological, bullets ranked by relevance), skills, projects, education. Use this in manual mode to let the agent select and tailor content before calling generate_resume.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args SearchResumeInput) (*mcp.CallToolResult, SearchResumeOutput, error) {
-		return handleSearchResume(ctx, req, args, d)
+		Name:        "resume_items",
+		Description: "Setup, CRUD, batch edits, and search for resume items. operation 'init' (data) overwrites the whole resume and rebuilds the vector store — first-time setup; 'add' (type + item) appends one item; 'get' lists items (optional type/id filter) so you can discover indices; 'update' (type + id + item) patches non-empty fields (bullets replace the whole list when provided) and re-embeds changed text; 'delete' (type + id) removes an item; 'batch' (requests) applies multiple add/update/delete operations in order and saves once, all-or-nothing; 'search' (query) returns ranked items grouped by category (experiences reverse chronological, bullets ranked by relevance). Types: experience, project, education, skill, bullet. For bullet operations pass parentType ('experience' or 'project'), parentId, and the bullet index as id. Embedding config is required for init, add, update with changed text, and search.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args ResumeItemsInput) (*mcp.CallToolResult, ResumeItemsOutput, error) {
+		return handleResumeItems(ctx, req, args, d)
 	})
 
 	// 5. generate_resume
@@ -150,56 +132,7 @@ func handleSetEmbeddingConfig(ctx context.Context, req *mcp.CallToolRequest, arg
 	}
 	log.Printf("set_embedding_config: config saved successfully")
 	return jsonResult(SetEmbeddingConfigOutput{
-		Message: "Embedding config saved. You can now call init_resume.",
-	})
-}
-
-func handleInitResume(ctx context.Context, req *mcp.CallToolRequest, args InitResumeInput, d deps) (*mcp.CallToolResult, InitResumeOutput, error) {
-	log.Printf("init_resume: name=%s experiences=%d skills=%d projects=%d education=%d",
-		args.Data.Name, len(args.Data.Experiences), len(args.Data.Skills), len(args.Data.Projects), len(args.Data.Education))
-
-	// Require embedding config
-	embCfg, err := d.ConfigStore.Load()
-	if err != nil {
-		log.Printf("init_resume: ERROR no embedding config: %v", err)
-		return nil, InitResumeOutput{}, fmt.Errorf("embedding config required: %w", err)
-	}
-
-	log.Printf("init_resume: skipping quota validation — no max limits on init")
-
-	// Save resume data
-	if err := d.ResumeStore.Save(args.Data); err != nil {
-		log.Printf("init_resume: ERROR saving resume: %v", err)
-		return nil, InitResumeOutput{}, err
-	}
-	log.Printf("init_resume: resume data saved")
-
-	// Build vector store
-	embedClient := vectorstore.NewEmbedClient(*embCfg)
-	log.Printf("init_resume: embedding %d chunks via %s", countChunks(args.Data), embCfg.Model)
-	chunks, err := vectorstore.IndexResume(args.Data, embedClient)
-	if err != nil {
-		log.Printf("init_resume: ERROR indexing resume: %v", err)
-		return nil, InitResumeOutput{}, fmt.Errorf("index resume: %w", err)
-	}
-	log.Printf("init_resume: embedded %d chunks", len(chunks))
-
-	// Reset and rebuild vector store
-	d.VectorStore.Reset()
-	for _, c := range chunks {
-		d.VectorStore.AddChunk(c)
-	}
-	if err := d.VectorStore.Save(); err != nil {
-		log.Printf("init_resume: ERROR saving vector store: %v", err)
-		return nil, InitResumeOutput{}, fmt.Errorf("save vector store: %w", err)
-	}
-
-	stats := resume.ComputeStats(args.Data)
-	log.Printf("init_resume: success — %d experiences, %d bullets, %d skills, %d projects, %d education",
-		stats.Experiences, stats.Bullets, stats.Skills, stats.Projects, stats.Education)
-	return jsonResult(InitResumeOutput{
-		Message: fmt.Sprintf("Resume initialized with %d experiences, %d bullets, %d skills, %d projects, %d education entries", stats.Experiences, stats.Bullets, stats.Skills, stats.Projects, stats.Education),
-		Stats:   stats,
+		Message: "Embedding config saved. You can now call resume_items.",
 	})
 }
 
@@ -226,43 +159,6 @@ func handleGetResumeInfo(ctx context.Context, req *mcp.CallToolRequest, d deps) 
 
 	log.Printf("get_resume_info: name=%s chunks=%d hasEmbedding=%v", stored.Data.Name, out.VectorChunks, hasEmb)
 	return jsonResult(out)
-}
-
-func handleSearchResume(ctx context.Context, req *mcp.CallToolRequest, args SearchResumeInput, d deps) (*mcp.CallToolResult, SearchResumeOutput, error) {
-	log.Printf("search_resume: query=%q topK=%d", args.Query, args.TopK)
-	if args.Query == "" {
-		log.Printf("search_resume: ERROR empty query")
-		return nil, SearchResumeOutput{}, fmt.Errorf("query is required")
-	}
-
-	embCfg, err := d.ConfigStore.Load()
-	if err != nil {
-		log.Printf("search_resume: ERROR no embedding config: %v", err)
-		return nil, SearchResumeOutput{}, fmt.Errorf("embedding config required: %w", err)
-	}
-
-	if !d.VectorStore.HasData() {
-		log.Printf("search_resume: ERROR no vector store data")
-		return nil, SearchResumeOutput{}, fmt.Errorf("no vector store data — call init_resume first")
-	}
-
-	embedClient := vectorstore.NewEmbedClient(*embCfg)
-	log.Printf("search_resume: embedding query via %s", embCfg.Model)
-	queryEmb, err := embedClient.Embed(args.Query)
-	if err != nil {
-		log.Printf("search_resume: ERROR embedding query: %v", err)
-		return nil, SearchResumeOutput{}, fmt.Errorf("embed query: %w", err)
-	}
-
-	topK := args.TopK
-	if topK <= 0 {
-		topK = 10
-	}
-
-	result := d.VectorStore.SearchGrouped(queryEmb, topK)
-	log.Printf("search_resume: success — %d experiences, %d skills, %d projects, %d education matched",
-		len(result.Experiences), len(result.Skills), len(result.Projects), len(result.Education))
-	return jsonResult(SearchResumeOutput{Result: result})
 }
 
 func handleGenerateResume(ctx context.Context, req *mcp.CallToolRequest, args GenerateResumeInput, d deps) (*mcp.CallToolResult, GenerateResumeOutput, error) {
@@ -298,7 +194,7 @@ func handleGenerateResume(ctx context.Context, req *mcp.CallToolRequest, args Ge
 
 		if !d.VectorStore.HasData() {
 			log.Printf("generate_resume: ERROR no vector store data")
-			return nil, GenerateResumeOutput{}, fmt.Errorf("no vector store data — call init_resume first")
+			return nil, GenerateResumeOutput{}, fmt.Errorf(`no vector store data — call resume_items with operation "init" first`)
 		}
 
 		embedClient := vectorstore.NewEmbedClient(*embCfg)
@@ -339,19 +235,6 @@ func handleGenerateResume(ctx context.Context, req *mcp.CallToolRequest, args Ge
 		Filename:   out.Filename,
 		Trimmed:    out.Trimmed,
 	})
-}
-
-func countChunks(data resume.ResumeData) int {
-	n := 0
-	for _, e := range data.Experiences {
-		n += len(e.Bullets)
-	}
-	n += len(data.Skills)
-	for _, p := range data.Projects {
-		n += len(p.Bullets)
-	}
-	n += len(data.Education)
-	return n
 }
 
 // jsonResult marshals the structured output as pretty JSON in the text content.

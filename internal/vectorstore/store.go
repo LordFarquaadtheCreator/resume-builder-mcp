@@ -126,11 +126,6 @@ func (s *Store) Reset() {
 	s.vectors = nil
 }
 
-// AddChunk adds a chunk with its embedding.
-func (s *Store) AddChunk(c Chunk) {
-	s.chunks = append(s.chunks, c)
-}
-
 // Search returns the top-K chunks by cosine similarity to the query embedding.
 func (s *Store) Search(queryEmbedding []float64, topK int) []ScoredChunk {
 	if len(s.chunks) == 0 || topK <= 0 {

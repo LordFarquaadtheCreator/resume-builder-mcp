@@ -6,10 +6,10 @@ MCP server for generating one-page PDF resumes from structured data with vector-
 
 This is a stdio-based MCP server written in Go. It exposes five tools:
 
-- `set_embedding_config` — stores OpenAI-compatible embedding endpoint config (base URL, API key, model) on disk. Must be called before `init_resume` or `search_resume`.
-- `init_resume` — accepts full structured resume data, stores on disk, embeds every bullet point + skill category + education + project into a vector store. Re-init = full overwrite of data + vector store.
-- `get_resume_info` — returns cached resume data + vector store stats. No embedding config needed.
-- `search_resume` — embeds job description query, searches vector store, returns ranked items grouped by category. Experiences reverse chronological, bullets ranked by relevance within each.
+- `set_embedding_config` — stores OpenAI-compatible embedding endpoint config (base URL, API key, model) on disk. Must be called before `resume_items` init/add/update (which embed new content) or `resume_items` search.
+- `health` — reports whether resume data and embedding config exist, vector chunk count, resume item stats, and the initialized timestamp. No config needed. Use it first to decide between `resume_items` init (first-time setup) and incremental operations.
+- `resume_items` — setup, CRUD, batch edits, and search for items. Operations: `init` (full resume payload, overwrites data + rebuilds the vector store), `add`, `get` (optional type/id filters), `update` (partial fields; bullets replace the whole list), `delete`, `batch` (list of add/update/delete requests applied in order and committed once, all-or-nothing), `search`. Types: experience, project, education, skill, bullet (bullets are addressed by parentType + parentId + bullet index). Add/update re-embed only changed text before persisting; delete renumbers vector store chunk IDs.
+- `get_resume_info` — returns full cached resume data + vector store stats. No embedding config needed.
 - `generate_resume` — generates one-page PDF. Two modes: `auto` (MCP searches vector store, selects content by relevance) or `manual` (agent provides full tailored data). Template must be specified.
 
 Data files (`resume.json`, `vectors.json`, `chunks.json`, `embedding_config.json`) are stored next to the executable, resolved via `os.Executable()`.
@@ -21,9 +21,10 @@ No LLM dependency. Only needs an OpenAI-compatible embedding endpoint (e.g. LM S
 ```
 Agent ──stdio──► MCP Server
                    set_embedding_config     ──► embedding_config.json
-                   init_resume              ──► resume.json + vectors.json + chunks.json
+                   health                   ──► resume.json + vector store stats
+                   resume_items init        ──► resume.json + vectors.json + chunks.json
+                   resume_items             ──► resume.json + vectors.json + chunks.json
                    get_resume_info          ──► resume.json + stats
-                   search_resume            ──► vector store search
                    generate_resume          ──► one-page PDF + trim info
 ```
 
@@ -39,6 +40,8 @@ Every bullet point gets its own embedding. This makes bullets the atomic unit of
 | `education` | `"{institution} - {degree}"` | institution, degree, dates, location |
 
 Search groups results by type. Experiences always reverse chronological. Bullets ranked by cosine similarity within each experience.
+
+Chunk IDs are index-based (`exp_2_bullet_1`, `skill_0`, `proj_0_bullet_0`, `edu_0`). CRUD deletes renumber later items so IDs keep matching resume positions, and updates re-embed only chunks whose text changed.
 
 ## One-Page Enforcement
 
@@ -80,15 +83,25 @@ Copy `mcp-config.json` into the agent's MCP config.
 | File | Purpose |
 |---|---|
 | `main.go` | Entry point, resolves data dir via `os.Executable()` |
-| `internal/mcpserver/server.go` | MCP server setup, 5 tool handlers |
+| `internal/mcpserver/server.go` | MCP server setup, tool registrations, generate_resume handler |
+| `internal/mcpserver/health.go` | health tool |
+| `internal/mcpserver/resume_items.go` | resume_items input/output types, dispatch, item conversions |
+| `internal/mcpserver/resume_items_read.go` | resume_items get + search operations |
+| `internal/mcpserver/resume_items_write.go` | resume_items init/add/update/delete/batch handlers |
+| `internal/mcpserver/resume_tx.go` | itemTx: stages mutations, embeds once, commits resume + vector store together |
+| `internal/mcpserver/resume_items_sync.go` | chunk builders, stale-ID helper, result builders |
 | `internal/resume/types.go` | ResumeData, Experience, Project, SkillGroup, Education structs |
-| `internal/resume/store.go` | JSON disk-backed resume Store |
+| `internal/resume/items.go` | Item type constants, indexed accessors, merge helpers |
+| `internal/resume/mutate.go` | In-memory Apply* mutation helpers (shared by store CRUD and itemTx) |
+| `internal/resume/store.go` | JSON disk-backed resume Store with CRUD |
 | `internal/resume/validate.go` | Guard rail quota validation |
 | `internal/vectorstore/types.go` | Chunk, ScoredChunk, SearchResult types |
 | `internal/vectorstore/store.go` | In-memory vector store with cosine similarity, disk persistence |
+| `internal/vectorstore/chunk.go` | Chunk ID formats, chunk builders, ID codecs |
+| `internal/vectorstore/crud.go` | Chunk CRUD, SyncChunkSlice/Erase* slice ops, Snapshot/SetChunks |
 | `internal/vectorstore/embed.go` | OpenAI-compatible embedding client |
 | `internal/vectorstore/config.go` | Embedding config disk persistence |
-| `internal/vectorstore/index.go` | Builds chunks from resume data + embeds them |
+| `internal/vectorstore/index.go` | BuildChunks: builds chunks from resume data (no embeddings) |
 | `internal/template/interface.go` | Renderer interface, template registry |
 | `internal/template/fahad.go` | Fahad template: Times serif, darkgray, two-column layout |
 | `internal/generate/generate.go` | One-page enforcement loop, PDF output |

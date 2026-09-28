@@ -6,10 +6,15 @@ MCP server for generating one-page PDF resumes from structured data with vector-
 
 Stdio-based MCP server written in Go. Exposes five tools:
 
-- `set_embedding_config` — stores OpenAI-compatible embedding endpoint config on disk. Must be called before `init_resume` or `search_resume`.
-- `init_resume` — stores structured resume data, embeds every bullet point + skill category into a vector store. Re-init = full overwrite.
-- `get_resume_info` — returns cached resume data + vector store stats.
-- `search_resume` — searches vector store by job description. Returns ranked items grouped by category. Experiences reverse chronological, bullets ranked by relevance.
+- `set_embedding_config` — stores OpenAI-compatible embedding endpoint config on disk. Must be called before `resume_items` init/add/update or `resume_items` search.
+- `health` — server status check: resume exists, embedding config set, vector chunk count, resume stats, initialized timestamp. No config needed.
+- `resume_items` — setup and item-level CRUD + search. Operations:
+  - `init` — full resume payload; overwrites stored data and rebuilds the vector store (first-time setup).
+  - `add`, `get`, `update`, `delete` — one item per call: experiences, projects, education, skills, bullets.
+  - `batch` — several add/update/delete requests applied in order and committed once; all-or-nothing.
+  - `search` — ranked items for a job description.
+  Add/update embed only changed text before persisting (so a failed embedding leaves the resume untouched); delete keeps the vector store's index-based chunk IDs consistent.
+- `get_resume_info` — returns the full cached resume data + vector store stats.
 - `generate_resume` — generates one-page PDF. Two modes: `auto` (MCP selects content from vector store) or `manual` (agent provides tailored data).
 
 No LLM dependency. Only needs an embedding endpoint (e.g. LM Studio).
@@ -52,11 +57,13 @@ Copy `mcp-config.json` into the agent's MCP config.
 ## Agent Workflow
 
 ```
-1. set_embedding_config(baseUrl, model)    → one-time setup
-2. init_resume(full resume data)           → stores + builds vector store
-3. Agent asks user: auto or manual?
+1. health                                  → check state (resume? embedding config?)
+2. set_embedding_config(baseUrl, model)    → one-time setup
+3. resume_items(init, data)                → stores + builds vector store
+4. resume_items(add/get/update/delete/batch) → incremental edits, vector store stays in sync
+5. resume_items(search, query)             → ranked items for tailoring
    auto:   generate_resume(mode="auto", query="job desc", template="fahad")
-   manual: search_resume(query) → agent tailors → generate_resume(mode="manual", data=..., template="fahad")
+   manual: agent tailors → generate_resume(mode="manual", data=..., template="fahad")
 ```
 
-Re-init (step 2) updates stored data + rebuilds vector store.
+Init (step 3) overwrites stored data + rebuilds the vector store.
