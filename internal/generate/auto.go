@@ -12,8 +12,10 @@ import (
 // Skills and education included as-is from search results.
 func AutoBuild(stored resume.ResumeData, result vectorstore.SearchResult) resume.ResumeData {
 	data := resume.ResumeData{
-		Name:    stored.Name,
-		Contact: stored.Contact,
+		Name:     stored.Name,
+		Headline: stored.Headline,
+		Summary:  stored.Summary,
+		Contact:  stored.Contact,
 	}
 
 	// Education: include all from search results, fallback to stored

@@ -5,6 +5,8 @@ import "time"
 // ResumeData is the full structured resume. All fields optional except Name.
 type ResumeData struct {
 	Name        string       `json:"name"`
+	Headline    string       `json:"headline,omitempty"`
+	Summary     string       `json:"summary,omitempty"`
 	Contact     Contact      `json:"contact,omitempty"`
 	Education   []Education  `json:"education,omitempty"`
 	Skills      []SkillGroup `json:"skills,omitempty"`

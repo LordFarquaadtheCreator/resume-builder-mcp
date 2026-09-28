@@ -34,7 +34,7 @@ type GenerateResumeInput struct {
 	Mode      string             `json:"mode" jsonschema:"required,Generation mode: 'auto' (MCP selects content) or 'manual' (agent provides full data)"`
 	Query     string             `json:"query,omitempty" jsonschema:"Job description for auto mode. Required if mode is 'auto'."`
 	Data      *resume.ResumeData `json:"data,omitempty" jsonschema:"Full resume data for manual mode. Required if mode is 'manual'."`
-	Template  string             `json:"template" jsonschema:"required,Template name (e.g. 'fahad')"`
+	Template  string             `json:"template" jsonschema:"required,Template name ('fahad' or 'bennett')"`
 	OutputDir string             `json:"outputDir,omitempty" jsonschema:"Output directory. Defaults to /tmp."`
 }
 
@@ -109,7 +109,7 @@ func Run(dataDir string) error {
 	// 5. generate_resume
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "generate_resume",
-		Description: "Generate a one-page PDF resume. Two modes: 'auto' (MCP searches vector store and selects content based on job description query) or 'manual' (agent provides full tailored resume data). Template must be specified (e.g. 'fahad'). Output saved to outputDir (default /tmp) as <Name>Resume.pdf. One-page enforced via measurement loop: trims oldest/lowest-relevance bullets, then experiences, then projects, then font scaling as last resort. Returns what was dropped.",
+		Description: "Generate a one-page PDF resume. Two modes: 'auto' (MCP searches vector store and selects content based on job description query) or 'manual' (agent provides full tailored resume data). Template must be specified ('fahad' for the serif classic, 'bennett' for the modern sans-serif layout). Output saved to outputDir (default /tmp) as <Name>Resume.pdf. One-page enforced via measurement loop: trims oldest/lowest-relevance bullets, then experiences, then projects, then font scaling as last resort. Returns what was dropped.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args GenerateResumeInput) (*mcp.CallToolResult, GenerateResumeOutput, error) {
 		return handleGenerateResume(ctx, req, args, d)
 	})

@@ -17,7 +17,7 @@ import (
 // Input is the agent-facing generate_resume tool input.
 type Input struct {
 	Data      resume.ResumeData `json:"data"`
-	Template  string            `json:"template" jsonschema:"required,Template name (e.g. 'fahad')"`
+	Template  string            `json:"template" jsonschema:"required,Template name ('fahad' or 'bennett')"`
 	OutputDir string            `json:"outputDir,omitempty" jsonschema:"Output directory. Defaults to /tmp."`
 }
 

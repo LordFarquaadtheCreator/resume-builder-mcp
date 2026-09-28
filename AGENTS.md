@@ -59,6 +59,7 @@ Chunk IDs are index-based (`exp_2_bullet_1`, `skill_0`, `proj_0_bullet_0`, `edu_
 | Template | Description |
 |---|---|
 | `fahad` | Fahad's LaTeX-style resume: Times serif, darkgray body (RGB 38,38,38), section rules, two-column headings. Letter paper, ~13mm margins. Section order: Education → Skills → Experience → Projects. |
+| `bennett` | Modern sans-serif (Helvetica), black on white, ~18mm margins. Centered uppercase name with `headline` subtitle, contact strip between full-width rules (vector icons for phone/email/location/links), uppercase section headings over rules, gray meta lines, justified body text, multi-column skills grid. Section order: About Me (`summary`) → Education → Work Experience → Skills → Projects. `headline` and `summary` are optional ResumeData fields, used only by this template. |
 
 ## Build
 
@@ -104,6 +105,8 @@ Copy `mcp-config.json` into the agent's MCP config.
 | `internal/vectorstore/index.go` | BuildChunks: builds chunks from resume data (no embeddings) |
 | `internal/template/interface.go` | Renderer interface, template registry |
 | `internal/template/fahad.go` | Fahad template: Times serif, darkgray, two-column layout |
+| `internal/template/bennett.go` | Bennett template: sans-serif, ruled headings, contact icons, skills grid |
+| `internal/template/icons.go` | Contact icon vector drawing helpers + contact strip layout |
 | `internal/generate/generate.go` | One-page enforcement loop, PDF output |
 | `internal/generate/auto.go` | AutoBuild: constructs ResumeData from search results |
 | `mcp-config.json` | MCP config snippet |

@@ -38,6 +38,8 @@ func Get(name string) Renderer {
 	switch name {
 	case "fahad":
 		return &FahadTemplate{}
+	case "bennett":
+		return &BennettTemplate{}
 	default:
 		return nil
 	}
@@ -45,5 +47,5 @@ func Get(name string) Renderer {
 
 // AvailableTemplates returns the list of registered template names.
 func AvailableTemplates() []string {
-	return []string{"fahad"}
+	return []string{"fahad", "bennett"}
 }
