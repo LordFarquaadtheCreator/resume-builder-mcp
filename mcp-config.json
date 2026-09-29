@@ -1,6 +1,6 @@
 {
   "resume-builder-stdio": {
-    "command": "/Users/farquaad/agents-skills/mcps/resume-builder/resume-builder",
+    "command": "/Users/farquaad/agents-skills/mcps/resume-builder-mcp/resume-builder",
     "args": []
   }
 }
